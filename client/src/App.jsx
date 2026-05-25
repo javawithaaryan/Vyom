@@ -1,5 +1,7 @@
 import { Routes, Route } from "react-router-dom";
 
+import Navbar from "./components/Navbar";
+
 import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import FraudDetection from "./pages/FraudDetection";
@@ -8,29 +10,33 @@ import NotFound from "./pages/NotFound";
 
 function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
+    <>
+      <Navbar />
 
-      <Route
-        path="/dashboard"
-        element={<Dashboard />}
-      />
+      <Routes>
+        <Route path="/" element={<Home />} />
 
-      <Route
-        path="/fraud-detection"
-        element={<FraudDetection />}
-      />
+        <Route
+          path="/dashboard"
+          element={<Dashboard />}
+        />
 
-      <Route
-        path="/scam-analyzer"
-        element={<ScamAnalyzer />}
-      />
+        <Route
+          path="/fraud-detection"
+          element={<FraudDetection />}
+        />
 
-      <Route
-        path="*"
-        element={<NotFound />}
-      />
-    </Routes>
+        <Route
+          path="/scam-analyzer"
+          element={<ScamAnalyzer />}
+        />
+
+        <Route
+          path="*"
+          element={<NotFound />}
+        />
+      </Routes>
+    </>
   );
 }
 
