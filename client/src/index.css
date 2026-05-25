@@ -1,0 +1,135 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #0f172a;
+  color: #ffffff;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+button {
+  border: none;
+  outline: none;
+  cursor: pointer;
+}
+
+/* =========================
+   NAVBAR STYLING
+========================= */
+
+.navbar {
+  width: 100%;
+  height: 70px;
+
+  background-color: #111827;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0 40px;
+
+  border-bottom: 1px solid #1f2937;
+}
+
+.logo h2 {
+  color: #ffffff;
+  font-size: 28px;
+  letter-spacing: 1px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 30px;
+}
+
+.nav-links a {
+  color: #d1d5db;
+
+  font-size: 16px;
+  font-weight: 500;
+
+  transition: 0.3s ease;
+}
+
+.nav-links a:hover {
+  color: #ffffff;
+}
+
+/* =========================
+   PAGE LAYOUT
+========================= */
+
+.page {
+  padding: 40px;
+}
+
+.page h1 {
+  font-size: 42px;
+  margin-bottom: 20px;
+}
+
+.page p {
+  color: #d1d5db;
+  font-size: 18px;
+}
+/* =========================
+   DASHBOARD
+========================= */
+
+.dashboard-grid {
+  margin-top: 40px;
+
+  display: grid;
+
+  grid-template-columns:
+    repeat(auto-fit, minmax(250px, 1fr));
+
+  gap: 25px;
+}
+
+.risk-card {
+  background-color: #111827;
+
+  padding: 30px;
+
+  border-radius: 12px;
+
+  border: 1px solid #1f2937;
+
+  transition: 0.3s ease;
+}
+
+.risk-card:hover {
+  transform: translateY(-5px);
+
+  border-color: #2563eb;
+}
+
+.risk-card h3 {
+  color: #9ca3af;
+
+  font-size: 18px;
+
+  margin-bottom: 20px;
+}
+
+.risk-card h1 {
+  font-size: 42px;
+
+  margin-bottom: 15px;
+}
+
+.risk-card p {
+  color: #22c55e;
+
+  font-size: 15px;
+}
