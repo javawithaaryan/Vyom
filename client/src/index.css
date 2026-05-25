@@ -367,3 +367,70 @@ tr:hover {
 
   display: inline-block;
 }
+/* =========================
+   FRAUD DETECTION FORM
+========================= */
+
+.fraud-form {
+  margin-top: 40px;
+
+  max-width: 500px;
+
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 20px;
+}
+
+.fraud-form input {
+  background-color: #111827;
+
+  border: 1px solid #374151;
+
+  padding: 15px;
+
+  border-radius: 10px;
+
+  color: #ffffff;
+
+  font-size: 16px;
+}
+
+.fraud-form button {
+  background-color: #2563eb;
+
+  color: #ffffff;
+
+  padding: 15px;
+
+  border-radius: 10px;
+
+  font-size: 16px;
+
+  font-weight: 600;
+
+  transition: 0.3s ease;
+}
+
+.fraud-form button:hover {
+  background-color: #1d4ed8;
+}
+
+.result-box {
+  margin-top: 30px;
+
+  background-color: #111827;
+
+  padding: 25px;
+
+  border-radius: 12px;
+
+  border: 1px solid #374151;
+}
+
+.result-box p {
+  color: #9ca3af;
+
+  margin-top: 10px;
+}
