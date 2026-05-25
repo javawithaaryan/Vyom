@@ -269,3 +269,22 @@ tr:hover {
 
   padding: 40px;
 }
+/* =========================
+   DASHBOARD HEADER
+========================= */
+
+.dashboard-header {
+  margin-bottom: 40px;
+}
+
+.dashboard-header h1 {
+  font-size: 42px;
+
+  margin-bottom: 10px;
+}
+
+.dashboard-header p {
+  color: #9ca3af;
+
+  font-size: 18px;
+}

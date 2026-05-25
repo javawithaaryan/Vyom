@@ -9,7 +9,14 @@ function Dashboard() {
       <Sidebar />
 
       <div className="dashboard-content">
-        <h1>Fraud Analytics Dashboard</h1>
+        <div className="dashboard-header">
+          <h1>Fraud Analytics Dashboard</h1>
+
+          <p>
+            Monitor fraud activity and AI risk
+            analysis in realtime.
+          </p>
+        </div>
 
         <div className="dashboard-grid">
           <RiskCard
