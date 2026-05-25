@@ -1,4 +1,5 @@
 import { useState } from "react";
+import API from "../services/api";
 
 function FraudDetection() {
   const [amount, setAmount] =
@@ -13,7 +14,7 @@ function FraudDetection() {
   const [result, setResult] =
     useState("");
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (
@@ -25,13 +26,21 @@ function FraudDetection() {
       return;
     }
 
-    if (amount > 5000) {
+    try {
+      console.log(API);
+
+      if (amount > 5000) {
+        setResult(
+          "⚠️ High Fraud Risk Detected"
+        );
+      } else {
+        setResult(
+          "✅ Transaction Looks Safe"
+        );
+      }
+    } catch (error) {
       setResult(
-        "⚠️ High Fraud Risk Detected"
-      );
-    } else {
-      setResult(
-        "✅ Transaction Looks Safe"
+        "Server connection failed"
       );
     }
   };
