@@ -5,10 +5,10 @@ let retryCount = 0;
 const MAX_RETRIES = 5;
 
 export async function connectDB() {
-  const uri = process.env.MONGODB_URI;
+  const uri = process.env.MONGO_URI;
 
   if (!uri) {
-    logger.error('MONGODB_URI is not defined in environment');
+    logger.error('MONGO_URI is not defined in environment');
     process.exit(1);
   }
 
