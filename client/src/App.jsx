@@ -1,33 +1,27 @@
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
-import Sidebar from './components/Sidebar';
-import Home from './pages/Home';
-import Dashboard from './pages/Dashboard';
-import FraudDetection from './pages/FraudDetection';
-import ScamAnalyzer from './pages/ScamAnalyzer';
+import AppShell from './components/AppShell';
+import LandingPage from './components/LandingPage';
+import DashboardView from './components/DashboardView';
+import AnalyzerView from './components/AnalyzerView';
+import InboxView from './components/InboxView';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import NotFound from './pages/NotFound';
+import PageLoader from './components/ui/PageLoader';
 
 function PrivateOutlet() {
   const { user, loading } = useAuth();
-  
+
   if (loading) {
-    return (
-      <div className="empty-state" style={{ minHeight: '100vh' }}>
-        <div className="spinner spinner-lg"></div>
-      </div>
-    );
+    return <PageLoader message="Checking your session…" />;
   }
-  
+
   return user ? (
-    <div className="app-shell with-sidebar">
-      <Sidebar />
-      <main className="page-content">
-        <Outlet />
-      </main>
-    </div>
+    <AppShell>
+      <Outlet />
+    </AppShell>
   ) : (
     <Navigate to="/login" replace />
   );
@@ -35,22 +29,19 @@ function PrivateOutlet() {
 
 function App() {
   return (
-    <>
-      <Navbar />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        
-        <Route element={<PrivateOutlet />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/fraud-detection" element={<FraudDetection />} />
-          <Route path="/scam-analyzer" element={<ScamAnalyzer />} />
-        </Route>
-        
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </>
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<><Navbar /><Login /></>} />
+      <Route path="/register" element={<><Navbar /><Register /></>} />
+
+      <Route element={<PrivateOutlet />}>
+        <Route path="/dashboard" element={<DashboardView />} />
+        <Route path="/fraud-detection" element={<AnalyzerView />} />
+        <Route path="/scam-analyzer" element={<InboxView />} />
+      </Route>
+
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
 }
 
