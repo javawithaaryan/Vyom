@@ -12,7 +12,7 @@ export function AuthProvider({ children }) {
     if (!token) { setLoading(false); return; }
 
     authApi.me()
-      .then((res) => setUser(res.data.user))
+      .then((res) => setUser(res?.data?.user ?? null))
       .catch(() => localStorage.removeItem('vyom_token'))
       .finally(() => setLoading(false));
   }, []);

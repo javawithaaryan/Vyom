@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import AppShell from './components/AppShell';
+import IntelligenceAssistant from './components/IntelligenceAssistant';
 import LandingPage from './components/LandingPage';
 import DashboardView from './components/DashboardView';
 import AnalyzerView from './components/AnalyzerView';
@@ -9,21 +10,24 @@ import InboxView from './components/InboxView';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import NotFound from './pages/NotFound';
-import PageLoader from './components/ui/PageLoader';
+import LoadingState from './components/ui/LoadingState';
 
 function PrivateOutlet() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <PageLoader message="Checking your session…" />;
+    return <LoadingState message="Checking your session…" />;
   }
 
-  return user ? (
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
     <AppShell>
       <Outlet />
+      <IntelligenceAssistant />
     </AppShell>
-  ) : (
-    <Navigate to="/login" replace />
   );
 }
 

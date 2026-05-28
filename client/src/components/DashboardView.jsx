@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { dashboardApi, fraudApi } from '../services/api';
-import { useRiskFeed } from '../hooks/useRiskFeed';
+import { useGlobalRiskFeed } from '../context/RiskFeedContext';
+import { useSocket } from '../context/SocketContext';
 import { getErrorMessage, riskLabel, formatDate } from '../utils/helpers';
 import RiskFeed from './ui/RiskFeed';
 import RiskEscalationTimeline from './ui/RiskEscalationTimeline';
-import PageLoader from './ui/PageLoader';
+import LoadingState from './ui/LoadingState';
 import EmptyState from './ui/EmptyState';
 
 export default function DashboardView() {
@@ -15,9 +16,10 @@ export default function DashboardView() {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { feed, setFeed } = useRiskFeed([]);
+  const { feed, setFeed } = useGlobalRiskFeed();
+  const socket = useSocket();
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -25,30 +27,31 @@ export default function DashboardView() {
         dashboardApi.stats(),
         fraudApi.history(15),
       ]);
-      const data = statsRes.data.data;
+
+      const data = statsRes?.data?.data ?? null;
       setStats(data);
 
-      const hist = (historyRes.data.data || []).map((t) => ({
-        id: t.id || t._id,
-        timestamp: formatDate(t.createdAt),
-        amount: t.amount,
-        location: t.location,
-        riskScore: t.riskScore,
-        riskLevel: t.riskLevel,
-        signals: t.signals,
-        humanSummary: t.humanSummary,
+      const hist = (historyRes?.data?.data || []).map((t) => ({
+        id: t?.id || t?._id,
+        timestamp: t?.createdAt ? formatDate(t.createdAt) : '—',
+        amount: t?.amount ?? 0,
+        location: t?.location ?? '—',
+        riskScore: t?.riskScore ?? 0,
+        riskLevel: t?.riskLevel ?? 'low',
+        humanSummary: t?.humanSummary,
       }));
       setTransactions(hist);
 
-      const fromApi = (data.escalationLogs || data.riskHistory || []).slice(0, 8).map((e, i) => {
-        const last = e.escalationTimeline?.[e.escalationTimeline.length - 1];
+      const logs = data?.escalationLogs ?? data?.riskHistory ?? [];
+      const fromApi = logs.slice(0, 10).map((e, i) => {
+        const last = e?.escalationTimeline?.[e.escalationTimeline?.length - 1];
         return {
-          id: `init-${e.id || i}`,
-          time: last?.time || formatDate(e.createdAt).split(',')[1]?.trim() || '',
-          event: last?.event || e.humanSummary || e.signals?.[0] || 'Risk event recorded',
-          riskAfter: e.finalRisk ?? last?.riskAfter,
-          type: e.sourceType,
-          riskLevel: e.riskLevel,
+          id: `init-${e?.id || i}`,
+          time: last?.time || '',
+          event: last?.event || e?.humanSummary || e?.signals?.[0] || 'Risk event',
+          riskAfter: e?.finalRisk ?? last?.riskAfter,
+          type: e?.sourceType || 'fraud',
+          riskLevel: e?.riskLevel,
         };
       });
       if (fromApi.length) setFeed(fromApi);
@@ -57,30 +60,48 @@ export default function DashboardView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [setFeed]);
 
   useEffect(() => {
     fetchDashboard();
-  }, []);
+  }, [fetchDashboard]);
 
-  const fraud = stats?.fraud || stats?.summary?.fraud || { total: 0, flagged: 0, avgRiskScore: 0 };
-  const scam = stats?.scam || stats?.summary?.scam || { total: 0, flagged: 0 };
-  const recentAnalyses = stats?.recentAnalyses || [];
-  const latestEscalation = stats?.escalationLogs?.[0]?.escalationTimeline || [];
+  useEffect(() => {
+    if (!socket) return;
+
+    const refresh = () => fetchDashboard();
+
+    socket.on('analysis:complete', refresh);
+    socket.on('risk:escalation', refresh);
+    socket.on('fraud:alert', refresh);
+    socket.on('scam:alert', refresh);
+
+    return () => {
+      socket.off('analysis:complete', refresh);
+      socket.off('risk:escalation', refresh);
+      socket.off('fraud:alert', refresh);
+      socket.off('scam:alert', refresh);
+    };
+  }, [socket, fetchDashboard]);
+
+  const fraud = stats?.fraud ?? stats?.summary?.fraud ?? {};
+  const scam = stats?.scam ?? stats?.summary?.scam ?? {};
+  const recentAnalyses = stats?.recentAnalyses ?? [];
+  const latestEscalation = stats?.escalationLogs?.[0]?.escalationTimeline ?? [];
 
   const filteredTx = useMemo(() => {
     const q = searchQuery.toLowerCase();
     if (!q) return transactions;
     return transactions.filter(
       (t) =>
-        String(t.id).toLowerCase().includes(q) ||
-        t.location?.toLowerCase().includes(q) ||
-        t.riskLevel?.includes(q)
+        String(t?.id ?? '').toLowerCase().includes(q) ||
+        String(t?.location ?? '').toLowerCase().includes(q) ||
+        String(t?.riskLevel ?? '').toLowerCase().includes(q)
     );
   }, [transactions, searchQuery]);
 
   if (loading && !stats) {
-    return <PageLoader message="Loading your protection overview…" />;
+    return <LoadingState message="Loading your protection overview…" />;
   }
 
   return (
@@ -88,12 +109,10 @@ export default function DashboardView() {
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-stone-900 tracking-tight">Overview</h1>
-          <p className="text-sm text-stone-500 mt-1">
-            Real activity from your analyses—no placeholder metrics.
-          </p>
+          <p className="text-sm text-stone-500 mt-1">Live updates when fraud or scam checks complete.</p>
         </div>
         <span className="inline-flex items-center gap-2 text-xs font-medium text-teal-800 bg-teal-50 border border-teal-100 px-3 py-1.5 rounded-full w-fit">
-          <span className="w-2 h-2 rounded-full bg-teal-600" />
+          <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse" />
           Monitoring active
         </span>
       </header>
@@ -109,10 +128,10 @@ export default function DashboardView() {
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Transactions reviewed', value: fraud.total, sub: `${fraud.cleared ?? fraud.total - fraud.flagged} cleared` },
-          { label: 'Messages scanned', value: scam.total, sub: `${scam.safe ?? scam.total - scam.flagged} low risk` },
-          { label: 'Average risk score', value: `${fraud.avgRiskScore}%`, sub: 'Across transactions' },
-          { label: 'Needs attention', value: fraud.flagged, sub: 'Flagged for review' },
+          { label: 'Transactions reviewed', value: fraud?.total ?? 0, sub: `${fraud?.cleared ?? 0} cleared` },
+          { label: 'Messages scanned', value: scam?.total ?? 0, sub: `${scam?.safe ?? 0} low risk` },
+          { label: 'Average risk', value: `${fraud?.avgRiskScore ?? 0}%`, sub: 'Across transactions' },
+          { label: 'Needs attention', value: fraud?.flagged ?? 0, sub: 'Flagged items' },
         ].map((card) => (
           <div key={card.label} className="glass-card p-5 rounded-2xl">
             <p className="text-xs font-medium text-stone-500">{card.label}</p>
@@ -125,16 +144,13 @@ export default function DashboardView() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <section className="lg:col-span-7 glass-card p-6 rounded-2xl">
           <h2 className="text-base font-semibold text-stone-900 mb-4">Recent analyses</h2>
-          {recentAnalyses.length === 0 ? (
+          {!recentAnalyses?.length ? (
             <EmptyState
               icon="analytics"
               title="No analyses yet"
-              description="Run a transaction or message check—we'll list results here with real timestamps."
+              description="No suspicious activity detected yet—that's a good sign. Run a check to see results here."
               action={
-                <Link
-                  to="/fraud-detection"
-                  className="text-sm font-semibold text-teal-700 hover:underline"
-                >
+                <Link to="/fraud-detection" className="text-sm font-semibold text-teal-700 hover:underline">
                   Check a transaction
                 </Link>
               }
@@ -143,14 +159,18 @@ export default function DashboardView() {
             <ul className="space-y-3">
               {recentAnalyses.slice(0, 6).map((a) => (
                 <li
-                  key={`${a.type}-${a.id}`}
+                  key={`${a?.type}-${a?.id}`}
                   className="flex justify-between gap-3 p-3 rounded-xl bg-stone-50 border border-stone-100"
                 >
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-stone-500 capitalize">{a.type} · {formatDate(a.createdAt)}</p>
-                    <p className="text-sm text-stone-800 mt-0.5 truncate">{a.summary || a.recommendation}</p>
+                    <p className="text-xs font-medium text-stone-500 capitalize">
+                      {a?.type ?? 'event'} · {a?.createdAt ? formatDate(a.createdAt) : ''}
+                    </p>
+                    <p className="text-sm text-stone-800 mt-0.5 truncate">
+                      {a?.summary || a?.recommendation || 'Analysis recorded'}
+                    </p>
                   </div>
-                  <span className="text-sm font-bold text-stone-700 shrink-0">{a.riskScore}%</span>
+                  <span className="text-sm font-bold text-stone-700 shrink-0">{a?.riskScore ?? 0}%</span>
                 </li>
               ))}
             </ul>
@@ -158,11 +178,15 @@ export default function DashboardView() {
         </section>
 
         <aside className="lg:col-span-5">
-          <RiskFeed items={feed} />
+          <RiskFeed
+            items={feed}
+            title="Live risk activity"
+            emptyMessage="Nothing flagged yet today. That's a good sign—we'll post updates here instantly when you run a check."
+          />
         </aside>
       </div>
 
-      {latestEscalation.length > 0 && (
+      {latestEscalation?.length > 0 && (
         <section className="glass-card p-6 rounded-2xl">
           <h2 className="text-base font-semibold text-stone-900 mb-4">Latest escalation path</h2>
           <RiskEscalationTimeline timeline={latestEscalation} animate={false} />
@@ -176,36 +200,35 @@ export default function DashboardView() {
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search location or id…"
+            placeholder="Search…"
             className="form-input max-w-xs text-sm"
           />
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm min-w-[600px]">
+          <table className="w-full text-left text-sm min-w-[500px]">
             <thead>
               <tr className="bg-stone-50 text-xs uppercase text-stone-500">
-                <th className="px-5 py-3 font-semibold">When</th>
-                <th className="px-5 py-3 font-semibold">Amount</th>
-                <th className="px-5 py-3 font-semibold">Location</th>
-                <th className="px-5 py-3 font-semibold">Risk</th>
+                <th className="px-5 py-3">When</th>
+                <th className="px-5 py-3">Amount</th>
+                <th className="px-5 py-3">Location</th>
+                <th className="px-5 py-3">Risk</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
-              {filteredTx.length === 0 ? (
+              {!filteredTx?.length ? (
                 <tr>
                   <td colSpan={4} className="px-5 py-10 text-center text-stone-500">
-                    No suspicious activity in this list. That can be a good sign.
+                    No transactions to show yet.
                   </td>
                 </tr>
               ) : (
-                filteredTx.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-stone-50/80">
+                filteredTx.map((tx, i) => (
+                  <tr key={tx.id} className="hover:bg-stone-50/80 animate-step-in" style={{ animationDelay: `${i * 40}ms` }}>
                     <td className="px-5 py-3 text-stone-600">{tx.timestamp}</td>
                     <td className="px-5 py-3 font-medium">${Number(tx.amount).toLocaleString()}</td>
                     <td className="px-5 py-3">{tx.location}</td>
                     <td className="px-5 py-3">
-                      <span className="font-semibold">{tx.riskScore}%</span>
-                      <span className="text-stone-500 ml-1">· {riskLabel(tx.riskLevel)}</span>
+                      {tx.riskScore}% · {riskLabel(tx.riskLevel)}
                     </td>
                   </tr>
                 ))

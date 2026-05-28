@@ -78,3 +78,14 @@ export function emitScamAlert(io, userId, alertData) {
     ...alertData,
   });
 }
+
+/** Broadcast every completed analysis so dashboard live feed stays in sync. */
+export function broadcastAnalysis(io, userId, payload) {
+  const type = payload.type || 'fraud';
+  const envelope = { type, ...payload };
+  const room = `user:${userId}`;
+
+  io.to(room).emit('analysis:complete', envelope);
+  io.to(room).emit('risk:escalation', envelope);
+  io.to(room).emit(type === 'scam' ? 'scam:alert' : 'fraud:alert', payload);
+}

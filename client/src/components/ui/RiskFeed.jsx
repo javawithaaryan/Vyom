@@ -1,10 +1,15 @@
+import { useGlobalRiskFeed } from '../../context/RiskFeedContext';
+
 function dotClass(level) {
   if (level === 'critical' || level === 'high' || level === 'High') return 'bg-red-500 ring-red-100';
   if (level === 'medium' || level === 'Medium') return 'bg-amber-500 ring-amber-100';
   return 'bg-teal-600 ring-teal-100';
 }
 
-export default function RiskFeed({ items = [], title = 'Live risk activity', emptyMessage }) {
+export default function RiskFeed({ items: itemsProp, title = 'Live risk activity', emptyMessage }) {
+  const { feed: globalFeed } = useGlobalRiskFeed();
+  const items = itemsProp !== undefined ? itemsProp : globalFeed;
+
   return (
     <div className="glass-card p-5 rounded-2xl flex flex-col h-full min-h-[200px]">
       <div className="flex items-center justify-between mb-4">
@@ -16,10 +21,10 @@ export default function RiskFeed({ items = [], title = 'Live risk activity', emp
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[280px]">
-        {items.length === 0 ? (
+        {!items?.length ? (
           <p className="text-sm text-stone-500 leading-relaxed">
             {emptyMessage ||
-              'Nothing flagged yet today. That’s a good sign—we’ll post updates here as we analyze activity.'}
+              "Nothing flagged yet today. That's a good sign—we'll post updates here as we analyze activity."}
           </p>
         ) : (
           items.map((item) => (

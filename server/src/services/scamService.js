@@ -111,9 +111,10 @@ export async function analyzeScamMessage({ userId, content, io }) {
     });
   }
 
-  if (io && merged.riskScore >= 45) {
-    const { emitScamAlert } = await import('../socket/index.js');
-    emitScamAlert(io, userId, {
+  if (io) {
+    const { broadcastAnalysis } = await import('../socket/index.js');
+    broadcastAnalysis(io, userId, {
+      type: 'scam',
       messageId: record._id,
       riskScore: merged.riskScore,
       riskLevel,

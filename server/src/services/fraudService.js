@@ -129,13 +129,15 @@ export async function analyzeTransaction({ userId, amount, location, device, mer
     });
   }
 
-  if (io && merged.riskScore >= 50) {
-    const { emitFraudAlert } = await import('../socket/index.js');
-    emitFraudAlert(io, userId, {
+  if (io) {
+    const { broadcastAnalysis } = await import('../socket/index.js');
+    broadcastAnalysis(io, userId, {
+      type: 'fraud',
       transactionId: transaction._id,
       riskScore: merged.riskScore,
       riskLevel,
       signals: merged.signals,
+      signalDetails: merged.signalDetails,
       escalationTimeline: merged.escalationTimeline,
       recommendation,
       humanSummary: merged.humanSummary,
