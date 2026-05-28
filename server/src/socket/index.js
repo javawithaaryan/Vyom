@@ -65,8 +65,16 @@ export function initSocket(httpServer) {
 // Emit fraud alert to specific user room
 export function emitFraudAlert(io, userId, alertData) {
   io.to(`user:${userId}`).emit('fraud:alert', alertData);
+  io.to(`user:${userId}`).emit('risk:escalation', {
+    type: 'fraud',
+    ...alertData,
+  });
 }
 
 export function emitScamAlert(io, userId, alertData) {
   io.to(`user:${userId}`).emit('scam:alert', alertData);
+  io.to(`user:${userId}`).emit('risk:escalation', {
+    type: 'scam',
+    ...alertData,
+  });
 }
