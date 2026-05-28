@@ -3,6 +3,7 @@ import { body } from 'express-validator';
 import { register, login, getMe } from '../controllers/authController.js';
 import { protect } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
+import { validateRequest } from '../middleware/validate.js';
 
 const router = Router();
 
@@ -10,10 +11,11 @@ router.post(
   '/register',
   authLimiter,
   [
-    body('name').trim().notEmpty().withMessage('Name is required').isLength({ max: 60 }),
+    body('name').trim().notEmpty().withMessage('Name is required').isLength({ max: 60 }).escape(),
     body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
   ],
+  validateRequest,
   register
 );
 
@@ -24,6 +26,7 @@ router.post(
     body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
     body('password').notEmpty().withMessage('Password is required'),
   ],
+  validateRequest,
   login
 );
 
