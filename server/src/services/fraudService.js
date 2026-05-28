@@ -1,80 +1,89 @@
 import axios from 'axios';
 import Transaction from '../models/Transaction.js';
+import RiskEvent from '../models/RiskEvent.js';
 import logger from '../config/logger.js';
+import { analyzeFraudSignals } from './fraudAnalyzer.js';
+import { mergeFraudAnalysis } from './aiMergeService.js';
+import { createRiskAlert } from './alertService.js';
+import { scoreToRiskLevel, fraudRecommendation } from '../utils/riskLevels.js';
 
 const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://127.0.0.1:8000';
 
-function ruleBasedScore(amount, location, device) {
-  let score = 0;
-  const signals = [];
-
-  // Amount-based risk
-  if (amount > 50000) { score += 35; signals.push('very_high_amount'); }
-  else if (amount > 10000) { score += 20; signals.push('high_amount'); }
-  else if (amount > 5000) { score += 10; signals.push('elevated_amount'); }
-
-  // Location risk patterns
-  const highRiskLocations = ['foreign', 'international', 'overseas', 'abroad'];
-  if (highRiskLocations.some((l) => location.toLowerCase().includes(l))) {
-    score += 20;
-    signals.push('foreign_location');
-  }
-
-  // Device risk patterns
-  const riskyDevices = ['unknown', 'new device', 'unrecognized', 'rooted', 'emulator'];
-  if (riskyDevices.some((d) => device.toLowerCase().includes(d))) {
-    score += 25;
-    signals.push('suspicious_device');
-  }
-
-  // Time-based risk (odd hours increase suspicion)
-  const hour = new Date().getHours();
-  if (hour >= 1 && hour <= 5) {
-    score += 10;
-    signals.push('unusual_hour');
-  }
-
-  return { score: Math.min(score, 100), signals };
+function formatFraudResponse(doc) {
+  const breakdown = doc.analysisBreakdown || {};
+  return {
+    id: doc._id,
+    riskScore: doc.riskScore,
+    riskLevel: doc.riskLevel,
+    signals: doc.signals,
+    signalDetails: doc.signalDetails,
+    escalationTimeline: doc.escalationTimeline,
+    recommendation: doc.recommendation,
+    humanSummary: doc.humanSummary,
+    aiReasoning: breakdown.aiReasoning || doc.aiReasoning,
+    confidenceExplanation: breakdown.confidenceExplanation || doc.confidenceExplanation,
+    confidencePercent: doc.aiConfidence ? Math.round(doc.aiConfidence * 100) : null,
+    weightedSignals: breakdown.weightedSignals || [],
+    amount: doc.amount,
+    location: doc.location,
+    device: doc.device,
+    merchantCategory: doc.merchantCategory,
+    aiConfidence: doc.aiConfidence,
+    analysisSource: breakdown.source || 'rules',
+    status: doc.status,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
 }
 
-function scoreToRiskLevel(score) {
-  if (score >= 75) return 'critical';
-  if (score >= 50) return 'high';
-  if (score >= 25) return 'medium';
-  return 'low';
+async function callAiFraudEngine(payload) {
+  const { data } = await axios.post(`${AI_ENGINE_URL}/predict/fraud`, payload, {
+    timeout: 5000,
+  });
+  return data;
 }
 
-export async function analyzeTransaction({ userId, amount, location, device, merchantCategory }) {
-  const { score: ruleScore, signals } = ruleBasedScore(amount, location, device);
+export async function analyzeTransaction({ userId, amount, location, device, merchantCategory, io }) {
+  const ruleEscalation = await analyzeFraudSignals({
+    userId,
+    amount,
+    location,
+    device,
+    merchantCategory,
+  });
 
-  let aiScore = null;
-  let aiConfidence = 0;
-  let breakdown = { rule_based: ruleScore };
+  let merged = {
+    ...ruleEscalation,
+    recommendation: fraudRecommendation(ruleEscalation.riskScore),
+  };
+  let breakdown = { rule_escalation: ruleEscalation.riskScore, source: 'rules' };
 
-  // Try AI engine, degrade gracefully if unavailable
   try {
-    const { data } = await axios.post(
-      `${AI_ENGINE_URL}/predict/fraud`,
-      { amount, location, device, merchant_category: merchantCategory || 'unknown' },
-      { timeout: 4000 }
-    );
-    aiScore = data.risk_score;
-    aiConfidence = data.confidence;
-    breakdown = { ...breakdown, ...data.breakdown };
-  } catch (err) {
-    logger.warn('AI engine unavailable for fraud analysis, using rule-based only', {
-      error: err.message,
+    const aiData = await callAiFraudEngine({
+      amount,
+      location,
+      device,
+      merchant_category: merchantCategory || 'unknown',
     });
+    merged = mergeFraudAnalysis(ruleEscalation, aiData);
+    breakdown = {
+      source: merged.source,
+      rule_escalation: ruleEscalation.riskScore,
+      ai_engine: aiData.breakdown,
+      ai_reasoning: merged.aiReasoning,
+      weighted_signals: merged.weightedSignals,
+      confidence_explanation: merged.confidenceExplanation,
+    };
+  } catch (err) {
+    logger.warn('AI engine unavailable for fraud analysis', { error: err.message });
+    merged.humanSummary =
+      merged.humanSummary ||
+      'We analyzed this transaction using on-platform behavioral rules. AI reasoning is temporarily unavailable.';
   }
 
-  // Blend scores: AI gets 60% weight if available, rules 40%
-  const finalScore =
-    aiScore !== null
-      ? Math.round(aiScore * 0.6 + ruleScore * 0.4)
-      : ruleScore;
-
-  const riskLevel = scoreToRiskLevel(finalScore);
-  const isFraud = finalScore >= 60;
+  const riskLevel = scoreToRiskLevel(merged.riskScore);
+  const recommendation = merged.recommendation || fraudRecommendation(merged.riskScore);
+  const isFraud = merged.riskScore >= 60;
 
   const transaction = await Transaction.create({
     userId,
@@ -82,50 +91,76 @@ export async function analyzeTransaction({ userId, amount, location, device, mer
     location,
     device,
     merchantCategory: merchantCategory || 'unknown',
-    riskScore: finalScore,
+    riskScore: merged.riskScore,
     riskLevel,
     isFraud,
-    signals,
-    aiConfidence,
+    signals: merged.signals,
+    signalDetails: merged.signalDetails,
+    escalationTimeline: merged.escalationTimeline,
+    recommendation,
+    humanSummary: merged.humanSummary,
+    aiConfidence: merged.aiConfidence || 0,
     analysisBreakdown: breakdown,
     status: isFraud ? 'flagged' : 'analyzed',
   });
 
+  const riskEvent = await RiskEvent.create({
+    userId,
+    sourceType: 'fraud',
+    sourceId: transaction._id,
+    baseRisk: 24,
+    finalRisk: merged.riskScore,
+    riskLevel,
+    signals: merged.signals,
+    signalDetails: merged.signalDetails,
+    escalationTimeline: merged.escalationTimeline,
+    recommendation,
+    humanSummary: merged.humanSummary,
+  });
+
+  if (merged.riskScore >= 50) {
+    await createRiskAlert({
+      userId,
+      type: 'fraud',
+      riskScore: merged.riskScore,
+      riskLevel,
+      relatedId: transaction._id,
+      summary: merged.humanSummary || merged.signals[0] || recommendation,
+    });
+  }
+
+  if (io && merged.riskScore >= 50) {
+    const { emitFraudAlert } = await import('../socket/index.js');
+    emitFraudAlert(io, userId, {
+      transactionId: transaction._id,
+      riskScore: merged.riskScore,
+      riskLevel,
+      signals: merged.signals,
+      escalationTimeline: merged.escalationTimeline,
+      recommendation,
+      humanSummary: merged.humanSummary,
+      aiReasoning: merged.aiReasoning,
+      confidenceExplanation: merged.confidenceExplanation,
+      riskEventId: riskEvent._id,
+    });
+  }
+
   logger.info('Transaction analyzed', {
     transactionId: transaction._id,
     userId,
-    riskScore: finalScore,
+    riskScore: merged.riskScore,
     riskLevel,
-    isFraud,
+    source: breakdown.source,
   });
 
-  return transaction;
+  return formatFraudResponse(transaction);
 }
 
 export async function getTransactionHistory(userId, limit = 20) {
-  return Transaction.find({ userId })
+  const rows = await Transaction.find({ userId })
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
-}
 
-export async function getDashboardStats(userId) {
-  const [total, flagged, recent] = await Promise.all([
-    Transaction.countDocuments({ userId }),
-    Transaction.countDocuments({ userId, isFraud: true }),
-    Transaction.find({ userId }).sort({ createdAt: -1 }).limit(5).lean(),
-  ]);
-
-  const avgRisk = await Transaction.aggregate([
-    { $match: { userId: userId } },
-    { $group: { _id: null, avg: { $avg: '$riskScore' } } },
-  ]);
-
-  return {
-    total,
-    flagged,
-    cleared: total - flagged,
-    avgRiskScore: Math.round(avgRisk[0]?.avg || 0),
-    recent,
-  };
+  return rows.map((t) => formatFraudResponse(t));
 }
