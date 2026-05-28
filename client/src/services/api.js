@@ -49,6 +49,8 @@ export const scamApi = {
 // Dashboard
 export const dashboardApi = {
   stats: () => api.get('/dashboard/stats'),
+  riskEvents: (limit = 20) => api.get(`/dashboard/risk-events?limit=${limit}`),
+  alerts: (limit = 10) => api.get(`/dashboard/alerts?limit=${limit}`),
 };
 
 export default api;
