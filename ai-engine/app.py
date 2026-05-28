@@ -12,14 +12,16 @@ load_dotenv()
 
 app = FastAPI(
     title="Vyom AI Engine",
-    description="Fraud prediction and scam detection AI service",
-    version="1.0.0",
+    description="Phase 2: explainable fraud and scam intelligence with weighted confidence",
+    version="2.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("CLIENT_URL", "http://localhost:5173"),
-                   os.getenv("SERVER_URL", "http://localhost:5000")],
+    allow_origins=[
+        os.getenv("CLIENT_URL", "http://localhost:5173"),
+        os.getenv("SERVER_URL", "http://localhost:5000"),
+    ],
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
@@ -41,28 +43,33 @@ class ScamRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "vyom-ai-engine"}
+    return {"status": "ok", "service": "vyom-ai-engine", "version": "2.0.0"}
 
 
 @app.post("/predict/fraud")
 def predict_fraud(req: FraudRequest):
+    """
+    Returns risk_score, escalation_timeline, reasoning (why_increased, behavior_change),
+    confidence_explanation, and human_summary.
+    """
     try:
-        result = fraud_scorer.score(
+        return fraud_scorer.score(
             amount=req.amount,
             location=req.location,
             device=req.device,
             merchant_category=req.merchant_category,
         )
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Fraud model error: {str(e)}")
 
 
 @app.post("/predict/scam")
 def predict_scam(req: ScamRequest):
+    """
+    Returns risk_score, escalation_timeline, highlighted_phrases, reasoning, human_summary.
+    """
     try:
-        result = scam_detector.analyze(content=req.content)
-        return result
+        return scam_detector.analyze(content=req.content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scam model error: {str(e)}")
 

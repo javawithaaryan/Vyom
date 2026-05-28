@@ -1,61 +1,54 @@
 """
-Vyom Fraud Scoring Engine
+Vyom Fraud Scoring Engine — Phase 2
 
-Rule-based + feature-engineered fraud risk scorer.
-Designed to be replaced or augmented with a trained ML model (scikit-learn, XGBoost)
-without changing the interface.
+Weighted signals, live escalation timeline, human reasoning, transparent confidence.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List
-import math
+from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
-# High-risk country/region keywords based on fraud pattern data
+from confidence_engine import WeightedSignal, build_escalation_timeline, compute_weighted_confidence
+
 HIGH_RISK_LOCATIONS = {
-    "nigeria", "ghana", "benin", "ivory coast", "cameroon",
-    "foreign", "international", "overseas", "abroad", "unknown location",
+    "nigeria", "ghana", "foreign", "international", "overseas", "abroad",
 }
-
-# Known safe domestic regions (lower risk weight)
-LOW_RISK_LOCATIONS = {
-    "home", "local", "domestic", "same city", "nearby",
-}
-
-# Device patterns that indicate elevated risk
 RISKY_DEVICE_PATTERNS = [
-    "unknown", "new device", "unrecognized", "rooted", "emulator",
-    "vpn", "proxy", "tor", "virtual", "burner",
+    ("vpn", "VPN or proxy connection identified", 18),
+    ("proxy", "VPN or proxy connection identified", 18),
+    ("tor", "Anonymous network routing detected", 20),
+    ("new device", "New device detected", 22),
+    ("unknown", "New or unrecognized device detected", 22),
+    ("unrecognized", "New or unrecognized device detected", 22),
+    ("emulator", "Emulated or virtual device detected", 24),
+    ("rooted", "Modified or rooted device detected", 20),
 ]
-
-# Merchant categories with historical fraud elevation
 HIGH_RISK_MERCHANTS = {
-    "cryptocurrency", "crypto", "gambling", "adult", "wire transfer",
-    "money transfer", "prepaid card", "gift card", "pawn",
-}
-
-LOW_RISK_MERCHANTS = {
-    "grocery", "supermarket", "pharmacy", "hospital", "utilities",
-    "government", "insurance", "education",
+    "cryptocurrency", "crypto", "gambling", "wire transfer",
+    "money transfer", "gift card", "prepaid",
 }
 
 
 @dataclass
-class ScoreComponent:
-    name: str
-    score: float
+class FraudContext:
+    amount: float
+    location: str
+    device: str
+    merchant_category: str
+
+
+@dataclass
+class SignalCheck:
+    signal_id: str
+    label: str
     weight: float
     triggered: bool
-    reason: str = ""
 
 
 class FraudScorer:
-    """
-    Weighted multi-signal fraud risk scorer.
-
-    Each component contributes to a 0–100 risk score.
-    Components are designed to mirror real-world fraud detection logic.
-    """
+    BASE_RISK = 24
 
     def score(
         self,
@@ -64,146 +57,202 @@ class FraudScorer:
         device: str,
         merchant_category: str = "unknown",
     ) -> Dict:
-        components: List[ScoreComponent] = []
+        ctx = FraudContext(
+            amount=float(amount),
+            location=(location or "").strip(),
+            device=(device or "").strip(),
+            merchant_category=(merchant_category or "unknown").strip(),
+        )
 
-        # --- Amount scoring ---
-        amount_score = self._score_amount(amount)
-        components.append(ScoreComponent(
-            name="amount_risk",
-            score=amount_score,
-            weight=0.30,
-            triggered=amount_score > 0,
-            reason=self._amount_reason(amount),
-        ))
+        checks = self._build_signal_checks(ctx)
+        triggered_steps = [
+            {"label": c.label, "weight": c.weight}
+            for c in checks
+            if c.triggered
+        ]
 
-        # --- Location scoring ---
-        loc_score, loc_reason = self._score_location(location)
-        components.append(ScoreComponent(
-            name="location_risk",
-            score=loc_score,
-            weight=0.25,
-            triggered=loc_score > 0,
-            reason=loc_reason,
-        ))
+        timeline, final_from_timeline = build_escalation_timeline(
+            self.BASE_RISK,
+            "Transaction submitted for risk review",
+            triggered_steps,
+        )
 
-        # --- Device scoring ---
-        dev_score, dev_reason = self._score_device(device)
-        components.append(ScoreComponent(
-            name="device_risk",
-            score=dev_score,
-            weight=0.25,
-            triggered=dev_score > 0,
-            reason=dev_reason,
-        ))
+        weighted = [
+            WeightedSignal(
+                signal_id=c.signal_id,
+                label=c.label,
+                weight=c.weight,
+                triggered=c.triggered,
+                contribution=c.weight if c.triggered else 0,
+            )
+            for c in checks
+        ]
 
-        # --- Merchant category scoring ---
-        merch_score, merch_reason = self._score_merchant(merchant_category)
-        components.append(ScoreComponent(
-            name="merchant_risk",
-            score=merch_score,
-            weight=0.20,
-            triggered=merch_score > 0,
-            reason=merch_reason,
-        ))
+        conf = compute_weighted_confidence(weighted)
+        component_score = self._component_aggregate(ctx, checks)
+        final_score = int(round(min(100, (final_from_timeline * 0.6 + component_score * 0.4))))
 
-        # Weighted aggregate
-        raw_score = sum(c.score * c.weight for c in components)
+        if len(triggered_steps) >= 3:
+            final_score = min(100, final_score + 5)
 
-        # Amplify when multiple high-risk signals co-occur
-        triggered_count = sum(1 for c in components if c.triggered and c.score > 50)
-        if triggered_count >= 3:
-            raw_score = min(raw_score * 1.25, 100)
-        elif triggered_count >= 2:
-            raw_score = min(raw_score * 1.10, 100)
+        # Reconcile timeline final step
+        if timeline:
+            timeline[-1]["riskAfter"] = final_score
 
-        final_score = round(raw_score, 1)
-        confidence = self._compute_confidence(components)
+        human_signals = [s["label"] for s in triggered_steps]
+        reasoning = self._build_reasoning(ctx, checks, final_score, conf, human_signals)
 
         return {
             "risk_score": final_score,
-            "confidence": round(confidence, 3),
-            "breakdown": {c.name: round(c.score, 1) for c in components},
-            "signals": [c.reason for c in components if c.triggered and c.reason],
+            "risk_level": self._risk_level(final_score),
+            "confidence": conf["confidence"],
+            "confidence_percent": conf["confidence_percent"],
+            "confidence_explanation": conf["explanation"],
+            "signals": human_signals,
+            "weighted_signals": [
+                {
+                    "id": w.signal_id,
+                    "label": w.label,
+                    "weight": w.weight,
+                    "triggered": w.triggered,
+                    "contribution": w.contribution,
+                }
+                for w in weighted
+            ],
+            "escalation_timeline": timeline,
+            "breakdown": {
+                c.signal_id: c.weight if c.triggered else 0
+                for c in checks
+            },
+            "reasoning": reasoning,
+            "human_summary": reasoning["summary"],
+            "recommendation": reasoning["recommendation"],
+            "analyzed_at": datetime.utcnow().isoformat() + "Z",
         }
 
-    def _score_amount(self, amount: float) -> float:
-        if amount <= 0:
-            return 5.0
-        if amount > 100_000:
-            return 95.0
-        if amount > 50_000:
-            return 80.0
-        if amount > 20_000:
-            return 65.0
-        if amount > 10_000:
-            return 50.0
-        if amount > 5_000:
-            return 35.0
-        if amount > 1_000:
-            return 15.0
-        return 5.0
+    def _build_signal_checks(self, ctx: FraudContext) -> List:
+        loc = ctx.location.lower()
+        dev = ctx.device.lower()
+        merch = ctx.merchant_category.lower()
 
-    def _amount_reason(self, amount: float) -> str:
-        if amount > 50_000:
-            return "extremely_large_transaction"
-        if amount > 10_000:
-            return "high_value_transaction"
-        if amount > 5_000:
-            return "elevated_transaction_amount"
-        return ""
+        amount_weight = 0
+        if ctx.amount > 50_000:
+            amount_weight = 28
+        elif ctx.amount > 10_000:
+            amount_weight = 20
+        elif ctx.amount > 5_000:
+            amount_weight = 14
+        elif ctx.amount > 2_000:
+            amount_weight = 10
 
-    def _score_location(self, location: str) -> tuple:
-        loc = location.lower().strip()
+        loc_weight = 0
+        loc_label = ""
+        if any(r in loc for r in HIGH_RISK_LOCATIONS):
+            loc_weight, loc_label = 20, "Location mismatch with your usual spending region"
+        elif len(loc) < 3 or loc in ("n/a", "none", "-"):
+            loc_weight, loc_label = 15, "Transaction location could not be verified"
 
-        for high_risk in HIGH_RISK_LOCATIONS:
-            if high_risk in loc:
-                return 85.0, "high_risk_geographic_region"
-
-        for low_risk in LOW_RISK_LOCATIONS:
-            if low_risk in loc:
-                return 5.0, ""
-
-        # Unknown/ambiguous location — moderate risk
-        if len(loc) < 3 or loc in ("n/a", "na", "none", "-"):
-            return 50.0, "location_not_provided"
-
-        return 20.0, ""
-
-    def _score_device(self, device: str) -> tuple:
-        dev = device.lower().strip()
-
-        for pattern in RISKY_DEVICE_PATTERNS:
+        device_weight = 0
+        device_label = ""
+        for pattern, label, weight in RISKY_DEVICE_PATTERNS:
             if pattern in dev:
-                return 80.0, f"suspicious_device_pattern:{pattern}"
+                device_weight = max(device_weight, weight)
+                device_label = label
 
-        if len(dev) < 3 or dev in ("n/a", "na", "none", "-"):
-            return 45.0, "device_unidentified"
+        merch_weight = 0
+        merch_label = ""
+        if any(m in merch for m in HIGH_RISK_MERCHANTS):
+            merch_weight, merch_label = 12, "Unusual merchant category for everyday spending"
+        elif merch in ("unknown", "", "other"):
+            merch_weight, merch_label = 8, "Merchant type was not recognized"
 
-        return 10.0, ""
+        hour = datetime.now().hour
+        time_weight = 8 if 1 <= hour <= 5 else 0
+        time_label = "Transaction at an unusual time of day" if time_weight else ""
 
-    def _score_merchant(self, category: str) -> tuple:
-        cat = category.lower().strip()
+        return [
+            SignalCheck("amount_spike", "Unusual payment spike compared to typical activity", amount_weight, amount_weight > 0),
+            SignalCheck("location_mismatch", loc_label or "Location mismatch", loc_weight, loc_weight > 0),
+            SignalCheck("new_device", device_label or "Device risk", device_weight, device_weight > 0),
+            SignalCheck("unusual_merchant", merch_label or "Merchant risk", merch_weight, merch_weight > 0),
+            SignalCheck("suspicious_timing", time_label or "Timing risk", time_weight, time_weight > 0),
+        ]
 
-        for high in HIGH_RISK_MERCHANTS:
-            if high in cat:
-                return 75.0, f"high_risk_merchant:{high}"
+    def _component_aggregate(self, ctx: FraudContext, checks: List) -> float:
+        base = float(self.BASE_RISK)
+        for c in checks:
+            if c.triggered:
+                base = min(100, base + c.weight * 0.85)
+        return base
 
-        for low in LOW_RISK_MERCHANTS:
-            if low in cat:
-                return 5.0, ""
+    def _build_reasoning(
+        self,
+        ctx: FraudContext,
+        checks: List,
+        final_score: int,
+        conf: Dict,
+        signals: List[str],
+    ) -> Dict:
+        triggered = [c for c in checks if c.triggered]
 
-        if cat in ("unknown", "", "other"):
-            return 30.0, "unknown_merchant_category"
+        if final_score >= 75:
+            summary = (
+                "This transaction differs significantly from normal spending behavior. "
+                "Multiple risk patterns appeared together."
+            )
+            recommendation = "Delay transaction verification until you confirm this was you."
+        elif final_score >= 50:
+            summary = (
+                "Several details about this transaction look unfamiliar compared with typical activity."
+            )
+            recommendation = "Review this transaction before approving it."
+        elif final_score >= 30:
+            summary = "A few minor unusual patterns were noted, but nothing critical on its own."
+            recommendation = "No immediate action needed—worth a quick glance if you do not recognize it."
+        else:
+            summary = "This transaction aligns with routine spending patterns we analyzed."
+            recommendation = "No immediate action needed."
 
-        return 15.0, ""
+        why_parts = []
+        if any(c.signal_id == "amount_spike" and c.triggered for c in triggered):
+            why_parts.append(
+                f"the amount (${ctx.amount:,.2f}) is higher than typical everyday purchases"
+            )
+        if any(c.signal_id == "location_mismatch" and c.triggered for c in triggered):
+            why_parts.append(f"the location ({ctx.location}) does not match familiar regions")
+        if any(c.signal_id == "new_device" and c.triggered for c in triggered):
+            why_parts.append("the device or network fingerprint looks unfamiliar")
+        if any(c.signal_id == "unusual_merchant" and c.triggered for c in triggered):
+            why_parts.append(f"the merchant category ({ctx.merchant_category}) is uncommon for you")
 
-    def _compute_confidence(self, components: List[ScoreComponent]) -> float:
-        """
-        Confidence is higher when more components have clear signals.
-        Low when most components are at default/ambiguous values.
-        """
-        signal_strength = sum(
-            min(c.score / 100, 1.0) * c.weight for c in components
+        why_increased = (
+            "Risk increased because " + ", and ".join(why_parts) + "."
+            if why_parts
+            else "Risk stayed low because no strong fraud patterns were detected together."
         )
-        # Sigmoid-like mapping to 0.5–0.99 range
-        return 0.5 + 0.49 * (1 - math.exp(-3 * signal_strength))
+
+        behavior_change = (
+            "Compared with routine activity, this attempt combines "
+            + f"{len(triggered)} independent anomaly signal(s)."
+            if triggered
+            else "Spending location, device, and amount appear consistent with low-risk activity."
+        )
+
+        return {
+            "summary": summary,
+            "why_increased": why_increased,
+            "behavior_change": behavior_change,
+            "confidence_explanation": conf["explanation"],
+            "recommendation": recommendation,
+            "top_signals": signals[:5],
+        }
+
+    @staticmethod
+    def _risk_level(score: int) -> str:
+        if score >= 75:
+            return "critical"
+        if score >= 50:
+            return "high"
+        if score >= 25:
+            return "medium"
+        return "low"

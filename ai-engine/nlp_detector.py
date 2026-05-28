@@ -1,15 +1,17 @@
 """
-Vyom NLP Scam Detector
+Vyom NLP Scam Detector — Phase 2
 
-Pattern-weighted scam signal analyzer.
-Designed to be progressively enhanced with transformer-based models
-(e.g. fine-tuned BERT) without API surface changes.
+Human language, weighted escalation, transparent confidence, phrase highlights.
 """
 
+from __future__ import annotations
+
 import re
-import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, List, Tuple
+
+from confidence_engine import WeightedSignal, build_escalation_timeline, compute_weighted_confidence
 
 
 @dataclass
@@ -18,50 +20,83 @@ class SignalPattern:
     pattern: re.Pattern
     weight: float
     category: str
-    description: str
+    human_label: str
+    phrase_pattern: re.Pattern | None = None
 
 
 SIGNAL_PATTERNS: List[SignalPattern] = [
-    # Credential extraction attempts
-    SignalPattern("otp_request", re.compile(r"\b(otp|one[\s-]time[\s-]pass(?:word|code)?)\b", re.I), 28.0, "phishing", "OTP/one-time password solicitation"),
-    SignalPattern("password_request", re.compile(r"\b(password|passcode|pin|secret[\s-]?code)\b", re.I), 30.0, "identity_theft", "Password or PIN request"),
-    SignalPattern("cvv_request", re.compile(r"\b(cvv|cvc|card[\s-]?verification|security[\s-]?code)\b", re.I), 32.0, "financial_fraud", "CVV/card verification solicitation"),
-
-    # Financial fraud patterns
-    SignalPattern("account_details", re.compile(r"\b(bank[\s-]?account|account[\s-]?number|sort[\s-]?code|iban|swift[\s-]?code)\b", re.I), 25.0, "financial_fraud", "Bank account details request"),
-    SignalPattern("wire_transfer", re.compile(r"\b(wire[\s-]?transfer|send[\s-]?money|transfer[\s-]?funds|money[\s-]?gram|western[\s-]?union)\b", re.I), 30.0, "financial_fraud", "Wire transfer instruction"),
-    SignalPattern("crypto_payment", re.compile(r"\b(bitcoin|crypto(?:currency)?|ethereum|usdt|wallet[\s-]?address)\b", re.I), 22.0, "financial_fraud", "Cryptocurrency payment request"),
-
-    # Urgency manipulation
-    SignalPattern("urgency", re.compile(r"\b(urgent|immediately|right\s+now|act\s+now|expire[sd]?|limited\s+time|last\s+chance|hours?\s+left)\b", re.I), 15.0, "urgency_manipulation", "Urgency pressure tactics"),
-    SignalPattern("account_threat", re.compile(r"\b(suspend(?:ed)?|block(?:ed)?|disable[d]?|restrict(?:ed)?|clos(?:ed?|ing))\b.{0,40}\b(account|card|access)\b", re.I), 22.0, "urgency_manipulation", "Account suspension threat"),
-
-    # Prize and reward scams
-    SignalPattern("prize_claim", re.compile(r"\b(lottery|jackpot|prize|reward|gift[\s-]?card|won\b|winner|selected|chosen)\b", re.I), 20.0, "prize_scam", "Prize or lottery claim"),
-    SignalPattern("free_money", re.compile(r"\b(free[\s-]?money|cash[\s-]?reward|bonus[\s-]?credit|unclaimed[\s-]?fund|inheritance)\b", re.I), 25.0, "prize_scam", "Free money or inheritance offer"),
-
-    # Phishing patterns
-    SignalPattern("verify_account", re.compile(r"\b(verify[\s-]?your|confirm[\s-]?your|update[\s-]?your|validate[\s-]?your)\b.{0,30}\b(account|identity|detail|information)\b", re.I), 22.0, "phishing", "Account verification phishing"),
-    SignalPattern("click_link", re.compile(r"\b(click[\s-]?(?:here|this|the[\s-]?link)|tap[\s-]?(?:here|below)|visit[\s-]?(?:this|the)[\s-]?link)\b", re.I), 15.0, "phishing", "Suspicious link click request"),
-    SignalPattern("suspicious_domain", re.compile(r"https?://\S+\.(xyz|top|tk|ml|ga|cf|gq|click|download|pw)\b", re.I), 30.0, "phishing", "Suspicious domain in message"),
-
-    # Impersonation
-    SignalPattern("gov_impersonation", re.compile(r"\b(government|irs|hmrc|income\s+tax|tax\s+refund|tax\s+return|customs|immigration)\b", re.I), 18.0, "impersonation", "Government agency impersonation"),
-    SignalPattern("bank_impersonation", re.compile(r"\b(your\s+bank|your\s+card\s+provider|customer\s+(?:care|service|support))\b.{0,40}\b(call|contact|reach)\b", re.I), 20.0, "impersonation", "Bank impersonation"),
-
-    # Social engineering
-    SignalPattern("secrecy_request", re.compile(r"\b(don[\'\u2019]?t\s+tell|keep\s+(?:this\s+)?secret|between\s+(?:us|you\s+and\s+me)|don[\'\u2019]?t\s+share)\b", re.I), 18.0, "urgency_manipulation", "Secrecy instruction"),
-    SignalPattern("forward_pressure", re.compile(r"\b(forward\s+this|share\s+this|send\s+to\s+(?:all|everyone|your\s+contacts))\b", re.I), 12.0, "urgency_manipulation", "Chain message pressure"),
+    SignalPattern(
+        "urgency_language",
+        re.compile(r"\b(urgent|immediately|right\s+now|act\s+now|expire[sd]?|limited\s+time)\b", re.I),
+        18.0,
+        "urgency_manipulation",
+        "Urgency and payment pressure language detected",
+        re.compile(r"\b(urgent|immediately|right\s+now|act\s+now)\b", re.I),
+    ),
+    SignalPattern(
+        "payment_pressure",
+        re.compile(r"\b(send\s+money|wire\s+transfer|pay\s+now|transfer\s+funds|gift\s+card)\b", re.I),
+        20.0,
+        "financial_fraud",
+        "Payment or transfer pressure detected",
+        re.compile(r"\b(send\s+money|wire\s+transfer|pay\s+now)\b", re.I),
+    ),
+    SignalPattern(
+        "credential_request",
+        re.compile(r"\b(otp|password|pin|cvv|security\s+code)\b", re.I),
+        25.0,
+        "identity_theft",
+        "Request for sensitive credentials detected",
+        re.compile(r"\b(otp|password|pin|cvv)\b", re.I),
+    ),
+    SignalPattern(
+        "phishing_verify",
+        re.compile(r"\b(verify\s+your\s+account|confirm\s+your\s+identity|click\s+here)\b", re.I),
+        16.0,
+        "phishing",
+        "Suspicious verification or link language",
+        re.compile(r"\b(verify\s+your\s+account|click\s+here)\b", re.I),
+    ),
+    SignalPattern(
+        "prize_scam",
+        re.compile(r"\b(lottery|won|winner|prize|congratulations|free\s+money)\b", re.I),
+        18.0,
+        "prize_scam",
+        "Prize or lottery-style reward language",
+        re.compile(r"\b(lottery|won|prize|congratulations)\b", re.I),
+    ),
+    SignalPattern(
+        "account_threat",
+        re.compile(
+            r"\b(suspended|blocked|disabled)\b.{0,40}\b(account|card)\b",
+            re.I,
+        ),
+        20.0,
+        "urgency_manipulation",
+        "Account suspension or lockout threat",
+        re.compile(r"\b(suspended|blocked|disabled)\b", re.I),
+    ),
+    SignalPattern(
+        "impersonation",
+        re.compile(r"\b(irs|hmrc|your\s+bank|government|tax\s+refund)\b", re.I),
+        15.0,
+        "impersonation",
+        "Institution impersonation cues detected",
+        re.compile(r"\b(irs|hmrc|your\s+bank)\b", re.I),
+    ),
+    SignalPattern(
+        "suspicious_domain",
+        re.compile(r"https?://\S+\.(xyz|top|tk|ml|ga|cf|gq)\b", re.I),
+        22.0,
+        "phishing",
+        "Suspicious link domain detected",
+        None,
+    ),
 ]
 
 
 class ScamDetector:
-    """
-    Multi-signal NLP scam detector using weighted pattern matching.
-
-    Designed to be swapped for a trained transformer model without
-    changing the public `analyze()` interface.
-    """
+    BASE_RISK = 12
 
     def analyze(self, content: str) -> Dict:
         matched: List[Tuple[SignalPattern, re.Match]] = []
@@ -73,67 +108,142 @@ class ScamDetector:
                 matched.append((sig, m))
                 categories.add(sig.category)
 
-        raw_score = sum(s.weight for s, _ in matched)
+        style_weight, style_label = self._style_check(content)
+        steps = [{"label": s.human_label, "weight": s.weight} for s, _ in matched]
+        if style_weight > 0 and style_label:
+            steps.append({"label": style_label, "weight": style_weight})
 
-        # Boost when multiple independent categories triggered
-        unique_cats = len(categories)
-        if unique_cats >= 4:
-            raw_score *= 1.30
-        elif unique_cats >= 3:
-            raw_score *= 1.15
-        elif unique_cats >= 2:
-            raw_score *= 1.05
+        timeline, timeline_score = build_escalation_timeline(
+            self.BASE_RISK,
+            "Message scanned for phishing patterns",
+            steps,
+        )
 
-        # Stylistic signals
-        style_score, style_signals = self._check_style(content)
-        raw_score += style_score
+        pattern_sum = sum(s.weight for s, _ in matched) + style_weight
+        final_score = int(round(min(100, max(timeline_score, pattern_sum * 0.85))))
 
-        final_score = min(round(raw_score, 1), 100.0)
-        confidence = self._compute_confidence(len(matched), len(content))
+        if len(categories) >= 3:
+            final_score = min(100, final_score + 4)
+        if timeline:
+            timeline[-1]["riskAfter"] = final_score
 
-        signals = [s.description for s, _ in matched] + style_signals
+        weighted = [
+            WeightedSignal(sig.name, sig.human_label, sig.weight, True)
+            for sig, _ in matched
+        ]
+        if style_weight > 0:
+            weighted.append(
+                WeightedSignal("style_pressure", style_label, style_weight, True)
+            )
+        for sig in SIGNAL_PATTERNS:
+            if not any(s.name == sig.name for s, _ in matched):
+                weighted.append(WeightedSignal(sig.name, sig.human_label, sig.weight, False))
+
+        conf = compute_weighted_confidence(weighted)
+        highlighted = self._extract_phrases(content, matched)
+        human_signals = [s["label"] for s in steps]
+        reasoning = self._build_reasoning(final_score, conf, human_signals, categories)
 
         return {
             "risk_score": final_score,
-            "confidence": round(confidence, 3),
+            "risk_level": self._risk_level(final_score),
+            "confidence": conf["confidence"],
+            "confidence_percent": conf["confidence_percent"],
+            "confidence_explanation": conf["explanation"],
+            "signals": human_signals,
+            "weighted_signals": [
+                {
+                    "id": w.signal_id,
+                    "label": w.label,
+                    "weight": w.weight,
+                    "triggered": w.triggered,
+                }
+                for w in weighted
+                if w.triggered
+            ],
+            "escalation_timeline": timeline,
+            "highlighted_phrases": highlighted,
+            "categories": list(categories) if categories else ["safe"],
             "breakdown": {
                 "pattern_score": round(sum(s.weight for s, _ in matched), 1),
-                "style_score": round(style_score, 1),
+                "style_score": round(style_weight, 1),
                 "signals_matched": len(matched),
-                "unique_categories": unique_cats,
+                "unique_categories": len(categories),
             },
-            "signals": signals,
-            "categories": list(categories) if categories else ["safe"],
+            "reasoning": reasoning,
+            "human_summary": reasoning["summary"],
+            "recommendation": reasoning["recommendation"],
+            "analyzed_at": datetime.utcnow().isoformat() + "Z",
         }
 
-    def _check_style(self, text: str) -> Tuple[float, List[str]]:
-        score = 0.0
-        signals = []
-
+    def _style_check(self, text: str) -> Tuple[float, str]:
         if len(text) > 15:
-            caps_ratio = sum(1 for c in text if c.isupper()) / len(text)
-            if caps_ratio > 0.45:
-                score += 12.0
-                signals.append("excessive_capitalization")
+            caps = sum(1 for c in text if c.isupper()) / len(text)
+            if caps > 0.45:
+                return 10.0, "Excessive capitalization suggesting pressure tactics"
+        if text.count("!") >= 3:
+            return 8.0, "Multiple exclamation marks used for urgency"
+        return 0.0, ""
 
-        exclamation_count = text.count('!')
-        if exclamation_count >= 3:
-            score += 8.0
-            signals.append("multiple_exclamation_marks")
+    def _extract_phrases(
+        self, content: str, matched: List[Tuple[SignalPattern, re.Match]]
+    ) -> List[str]:
+        found = set()
+        for sig, _ in matched:
+            if sig.phrase_pattern:
+                for m in sig.phrase_pattern.finditer(content):
+                    found.add(m.group(0).strip())
+        return list(found)[:8]
 
-        # Emoji spam
-        emoji_pattern = re.compile(
-            "[\U00010000-\U0010ffff]", flags=re.UNICODE
+    def _build_reasoning(self, score: int, conf: Dict, signals: List[str], categories: set) -> Dict:
+        if score >= 70:
+            summary = (
+                "Urgency and payment pressure language detected. "
+                "This message closely resembles known phishing behavior."
+            )
+            recommendation = "Do not reply, click links, or share codes. Report and delete this message."
+        elif score >= 45:
+            summary = (
+                "Several phrases match common scam tactics. "
+                "Verify the sender through a trusted channel before acting."
+            )
+            recommendation = "Pause before responding. Contact the organization using their official website or app."
+        elif score >= 20:
+            summary = "Some wording feels pressuring or unusual for a legitimate message."
+            recommendation = "Treat this message with light caution until you confirm who sent it."
+        else:
+            summary = "No strong scam patterns were found in the language of this message."
+            recommendation = "No immediate action needed, but stay cautious with unknown senders."
+
+        why = (
+            "Risk rose as we matched patterns often seen in "
+            + ", ".join(sorted(categories))
+            + " attempts."
+            if categories
+            else "Risk remained low because familiar scam phrases were not detected."
         )
-        emoji_count = len(emoji_pattern.findall(text))
-        if emoji_count >= 5:
-            score += 6.0
-            signals.append("emoji_spam")
 
-        return score, signals
+        behavior = (
+            f"The message triggered {len(signals)} linguistic risk signal(s) in sequence."
+            if signals
+            else "Language tone and structure appear typical for legitimate mail."
+        )
 
-    def _compute_confidence(self, matched_count: int, text_length: int) -> float:
-        if text_length < 10:
-            return 0.5
-        signal_density = matched_count / max(text_length / 100, 1)
-        return 0.5 + 0.48 * (1 - math.exp(-2 * signal_density))
+        return {
+            "summary": summary,
+            "why_increased": why,
+            "behavior_change": behavior,
+            "confidence_explanation": conf["explanation"],
+            "recommendation": recommendation,
+            "top_signals": signals[:5],
+        }
+
+    @staticmethod
+    def _risk_level(score: int) -> str:
+        if score >= 70:
+            return "confirmed_scam"
+        if score >= 45:
+            return "likely_scam"
+        if score >= 20:
+            return "suspicious"
+        return "safe"
