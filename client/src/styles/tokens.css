@@ -1,0 +1,8 @@
+/* src/styles/tokens.css */
+:root {
+  --vyom-bg: #0a0b1e;           /* deep navy background */
+  --vyom-primary: #5dd0e2;      /* cyan accent */
+  --vyom-surface: #1a1b23;      /* matte dark surface */
+  --vyom-radius: 8px;           /* uniform border radius */
+  --vyom-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}

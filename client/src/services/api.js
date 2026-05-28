@@ -1,56 +1,115 @@
-import axios from 'axios';
+import axios from "axios";
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 10000,
-  headers: { 'Content-Type': 'application/json' },
+  timeout: 15000,
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
-// Attach JWT to every request
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('vyom_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Attach JWT token automatically
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("vyom_token");
 
-// Normalise error responses
-api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('vyom_token');
-      window.location.href = '/login';
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-    return Promise.reject(err);
+
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Handle auth/session errors globally
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+
+    if (status === 401) {
+      localStorage.removeItem("vyom_token");
+
+      // avoid infinite redirect loop
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+
+    return Promise.reject(
+      error?.response?.data || {
+        message: "Something went wrong",
+      }
+    );
   }
 );
 
-// Auth
+/* =========================
+   AUTH
+========================= */
+
 export const authApi = {
-  register: (data) => api.post('/auth/register', data),
-  login: (data) => api.post('/auth/login', data),
-  me: () => api.get('/auth/me'),
+  register: async (data) => {
+    return await api.post("/auth/register", data);
+  },
+
+  login: async (data) => {
+    return await api.post("/auth/login", data);
+  },
+
+  me: async () => {
+    return await api.get("/auth/me");
+  },
 };
 
-// Fraud
+/* =========================
+   FRAUD
+========================= */
+
 export const fraudApi = {
-  analyze: (data) => api.post('/fraud/analyze', data),
-  history: (limit = 20) => api.get(`/fraud/history?limit=${limit}`),
+  analyze: async (data) => {
+    return await api.post("/fraud/analyze", data);
+  },
+
+  history: async (limit = 20) => {
+    return await api.get(`/fraud/history?limit=${limit}`);
+  },
 };
 
-// Scam
+/* =========================
+   SCAM
+========================= */
+
 export const scamApi = {
-  analyze: (data) => api.post('/scam/analyze', data),
-  history: (limit = 20) => api.get(`/scam/history?limit=${limit}`),
+  analyze: async (data) => {
+    return await api.post("/scam/analyze", data);
+  },
+
+  history: async (limit = 20) => {
+    return await api.get(`/scam/history?limit=${limit}`);
+  },
 };
 
-// Dashboard
+/* =========================
+   DASHBOARD
+========================= */
+
 export const dashboardApi = {
-  stats: () => api.get('/dashboard/stats'),
-  riskEvents: (limit = 20) => api.get(`/dashboard/risk-events?limit=${limit}`),
-  alerts: (limit = 10) => api.get(`/dashboard/alerts?limit=${limit}`),
+  stats: async () => {
+    return await api.get("/dashboard/stats");
+  },
+
+  riskEvents: async (limit = 20) => {
+    return await api.get(`/dashboard/risk-events?limit=${limit}`);
+  },
+
+  alerts: async (limit = 10) => {
+    return await api.get(`/dashboard/alerts?limit=${limit}`);
+  },
 };
 
 export default api;
