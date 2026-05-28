@@ -1,5 +1,4 @@
 import jwt from 'jsonwebtoken';
-import { validationResult } from 'express-validator';
 import User from '../models/User.js';
 import logger from '../config/logger.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
@@ -10,11 +9,6 @@ const signToken = (id) =>
   });
 
 export const register = asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ success: false, errors: errors.array() });
-  }
-
   const { name, email, password } = req.body;
 
   const existing = await User.findOne({ email });
@@ -35,11 +29,6 @@ export const register = asyncHandler(async (req, res) => {
 });
 
 export const login = asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ success: false, errors: errors.array() });
-  }
-
   const { email, password } = req.body;
 
   const user = await User.findOne({ email }).select('+password');
