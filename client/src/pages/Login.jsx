@@ -8,7 +8,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  
+
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -16,12 +16,12 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
+
     try {
       await login(email, password);
       navigate('/dashboard');
     } catch (err) {
-      setError(getErrorMessage(err));
+      setError(getErrorMessage(err) || "We couldn't sign you in. Check your email and password.");
     } finally {
       setLoading(false);
     }
@@ -31,44 +31,52 @@ export default function Login() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
-          <div className="dot"></div>
+          <div className="dot" />
           VYOM
         </div>
         <h1 className="auth-title">Welcome back</h1>
-        <p className="auth-sub">Sign in to your dashboard</p>
-        
-        {error && <div className="alert alert-error">{error}</div>}
-        
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <p className="auth-sub">Sign in to review your fraud and scam activity.</p>
+
+        {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+        <form className="auth-form" onSubmit={handleSubmit} noValidate>
           <div className="form-group">
-            <label className="form-label">Email Address</label>
-            <input 
-              type="email" 
-              className="form-input" 
+            <label className="form-label" htmlFor="email">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              className="form-input"
               required
+              autoComplete="email"
               value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="name@company.com"
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
             />
           </div>
           <div className="form-group">
-            <label className="form-label">Password</label>
-            <input 
-              type="password" 
-              className="form-input" 
+            <label className="form-label" htmlFor="password">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              className="form-input"
               required
+              autoComplete="current-password"
               value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••"
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Your password"
             />
           </div>
           <button type="submit" className="form-btn" disabled={loading}>
-            {loading ? <div className="spinner"></div> : 'Sign In'}
+            {loading ? <div className="spinner" aria-hidden /> : 'Sign in'}
           </button>
         </form>
-        
+
         <div className="auth-footer">
-          Don't have an account? <Link to="/register">Create one</Link>
+          New here? <Link to="/register">Create an account</Link>
         </div>
       </div>
     </div>
